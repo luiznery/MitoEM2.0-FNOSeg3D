@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Usage:
-#   bash setup_mitoem2_env.sh [SCRATCH_DIR]
+#   bash scripts/setup_mitoem2_env.sh [SCRATCH_DIR]
 #
 # Default SCRATCH_DIR is /tempory/luiznery. The script keeps conda envs,
 # package caches, pip cache, and temporary files under SCRATCH_DIR.
@@ -11,7 +11,8 @@ SCRATCH_DIR="${1:-/tempory/luiznery}"
 ENV_NAME="mitoem2"
 ENV_PREFIX="$SCRATCH_DIR/conda_envs/$ENV_NAME"
 MINIFORGE_DIR="$SCRATCH_DIR/miniforge3"
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BASHRC="$HOME/.bashrc"
 
 mkdir -p \
