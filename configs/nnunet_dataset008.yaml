@@ -1,0 +1,23 @@
+method: nnunet
+
+dataset:
+  id: Dataset008_ME2-Stem
+
+output:
+  model_dir: ./nnunet_results
+
+logging:
+  level: INFO
+  use_wandb: false
+
+nnunet:
+  output_dir: ./nnunet_results
+  fold: 0
+  trainer: nnUNetTrainer
+  max_epochs: 1000
+  skip_boundary: false
+  skip_plan: false
+  skip_training: false
+  skip_prediction: false
+  skip_postprocess: false
+  skip_evaluation: false

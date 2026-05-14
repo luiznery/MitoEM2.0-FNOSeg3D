@@ -67,3 +67,5 @@ build/
 datasets/*
 scripts/hold*
 scripts/code/hold*
+
+nnunet*/*
