@@ -12,7 +12,11 @@ long_description = (this_directory / "README.md").read_text(encoding='utf-8') if
 requirements = []
 if (this_directory / "requirements.txt").exists():
     with open(this_directory / "requirements.txt", "r", encoding='utf-8') as f:
-        requirements = [line.strip() for line in f if line.strip() and not line.startswith("#")]
+        requirements = [
+            line.strip()
+            for line in f
+            if line.strip() and not line.startswith("#") and not line.startswith("-")
+        ]
 
 setup(
     name="mitoem2",
