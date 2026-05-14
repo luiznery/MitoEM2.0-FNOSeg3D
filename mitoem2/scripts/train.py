@@ -18,7 +18,7 @@ def main():
         "--method",
         type=str,
         required=True,
-        choices=["mitonet", "microsam", "nnunet"],
+        choices=["mitonet", "microsam", "nnunet", "fnoseg3d"],
         help="Method to train",
     )
     parser.add_argument(
@@ -225,6 +225,24 @@ def main():
         trainer = NNUNetTrainer.from_config(config, logger=logger)
         trainer.run_pipeline()
         return
+    elif args.method == "fnoseg3d":
+        from mitoem2.training.fnoseg3d_trainer import FNOSeg3DTrainer
+
+        trainer = FNOSeg3DTrainer.from_config(config)
+
+        # derive epochs from config
+        if hasattr(config, "training"):
+            if isinstance(config.training, dict):
+                n_epochs = config.training.get("n_epochs", 100)
+            else:
+                n_epochs = getattr(config.training, "n_epochs", 100)
+        else:
+            n_epochs = 100
+
+        trainer.train(
+            num_epochs=n_epochs,
+            checkpoint_path=Path(args.resume) if args.resume else None,
+        )
     else:
         raise ValueError(f"Unsupported method: {args.method}")
 
