@@ -262,6 +262,49 @@ class NNUNetPipelineConfig:
 
 
 @dataclass
+class FNOSeg3DConfig(BaseConfig):
+    """FNOSeg3D-specific configuration."""
+    method: str = "fnoseg3d"
+    training: TrainingConfig = field(default_factory=TrainingConfig)
+
+    @classmethod
+    def from_dict(cls, config_dict: Dict[str, Any]) -> "FNOSeg3DConfig":
+        """Create FNOSeg3D config from dictionary."""
+        # Handle legacy format
+        if "dataset" in config_dict and isinstance(config_dict["dataset"], (str, int)):
+            dataset_id = config_dict["dataset"]
+            config_dict["dataset"] = {"id": dataset_id}
+
+        # Handle training config
+        if "training" in config_dict and isinstance(config_dict["training"], dict):
+            config_dict["training"] = TrainingConfig(**config_dict["training"])
+
+        # Create base config first
+        base_config = BaseConfig.from_dict(config_dict)
+
+        # Create FNOSeg3D-specific config - preserve dataclass objects
+        fnoseg3d_dict = {
+            "method": "fnoseg3d",
+            "dataset": base_config.dataset,
+            "model": base_config.model,
+            "inference": base_config.inference,
+            "logging": base_config.logging,
+            "output": base_config.output,
+        }
+
+        # Add training config if present
+        if hasattr(base_config, "training"):
+            fnoseg3d_dict["training"] = base_config.training
+        elif "training" in config_dict:
+            if isinstance(config_dict["training"], TrainingConfig):
+                fnoseg3d_dict["training"] = config_dict["training"]
+            else:
+                fnoseg3d_dict["training"] = TrainingConfig(**config_dict["training"])
+
+        return cls(**fnoseg3d_dict)
+
+
+@dataclass
 class NNUNetConfig(BaseConfig):
     """nnUNet-specific configuration."""
     method: str = "nnunet"
@@ -302,7 +345,7 @@ def load_config(config_path: Union[str, Path], method: Optional[str] = None) -> 
 
     Args:
         config_path: Path to YAML configuration file.
-        method: Method name (mitonet, microsam, nnunet). If None, auto-detect from config.
+        method: Method name (mitonet, microsam, nnunet, fnoseg3d). If None, auto-detect from config.
 
     Returns:
         Configuration object.
@@ -325,6 +368,8 @@ def load_config(config_path: Union[str, Path], method: Optional[str] = None) -> 
         return MicroSAMConfig.from_dict(config_dict)
     elif method == "nnunet":
         return NNUNetConfig.from_dict(config_dict)
+    elif method == "fnoseg3d":
+        return FNOSeg3DConfig.from_dict(config_dict)
     else:
         return BaseConfig.from_dict(config_dict)
 
@@ -380,5 +425,7 @@ def update_config_from_args(config: BaseConfig, args: Dict[str, Any]) -> BaseCon
         return MicroSAMConfig.from_dict(config_dict)
     elif isinstance(config, NNUNetConfig):
         return NNUNetConfig.from_dict(config_dict)
+    elif isinstance(config, FNOSeg3DConfig):
+        return FNOSeg3DConfig.from_dict(config_dict)
     else:
         return BaseConfig.from_dict(config_dict)

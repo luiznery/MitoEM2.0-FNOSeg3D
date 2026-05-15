@@ -10,7 +10,7 @@ import os
 import subprocess
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 import shutil  # Keep import
 
 import tifffile as tiff
@@ -343,6 +343,12 @@ class NNUNetTrainer:
     def _nnunet_train(self) -> None:
         env = self._nnunet_env()
         dataset_number = self._dataset_number()
+
+        # nnUNet defaults to generating a 5-fold CV split. If the dataset has fewer than
+        # 5 training cases this will crash. If a split definition exists in the dataset
+        # root (split.json), we prefer it.
+        self._ensure_nnunet_splits_file()
+
         cmd = [
             "nnUNetv2_train",
             dataset_number,
@@ -350,6 +356,117 @@ class NNUNetTrainer:
             str(self.pipeline_config.fold),
         ]
         self._run_subprocess(cmd, env=env, description="nnUNet training")
+
+    def _ensure_nnunet_splits_file(self) -> None:
+        """Ensure a valid splits file exists in nnUNet_preprocessed.
+
+        nnUNetv2 training uses `splits_final.json` in the preprocessed dataset folder.
+        If it is missing, nnUNet will generate a default 5-fold split, which fails for
+        datasets with <5 training cases.
+        """
+        preprocessed_dataset_dir = self.nnunet_preprocessed_dir / self.dataset_name
+        splits_final = preprocessed_dataset_dir / "splits_final.json"
+        splits_legacy = preprocessed_dataset_dir / "splits.json"
+
+        if splits_final.exists():
+            self._validate_requested_fold(splits_final)
+            return
+
+        # Prefer a user-provided split definition alongside dataset.json
+        dataset_split_path = self.dataset_dir / "split.json"
+        splits: list[dict[str, list[str]]]
+        if dataset_split_path.exists():
+            splits = self._load_dataset_split_json(dataset_split_path)
+            self.logger.info("Using dataset split file: %s", dataset_split_path)
+        else:
+            splits = self._generate_small_dataset_splits_from_imagestr()
+            self.logger.info(
+                "Generated nnUNet splits (no split.json found). folds=%d", len(splits)
+            )
+
+        if not splits:
+            raise ValueError(
+                "Could not determine training/validation split. "
+                "Please add a split.json to the dataset directory."
+            )
+
+        preprocessed_dataset_dir.mkdir(parents=True, exist_ok=True)
+        with open(splits_final, "w") as f:
+            json.dump(splits, f, indent=2)
+
+        # Also write splits.json for compatibility with some nnUNet versions/tools
+        try:
+            with open(splits_legacy, "w") as f:
+                json.dump(splits, f, indent=2)
+        except Exception:
+            pass
+
+        self._validate_requested_fold(splits_final)
+        self.logger.info("Wrote nnUNet split file: %s", splits_final)
+
+    def _validate_requested_fold(self, splits_path: Path) -> None:
+        try:
+            with open(splits_path, "r") as f:
+                splits = json.load(f)
+        except Exception as exc:
+            raise ValueError(f"Failed to read nnUNet splits file: {splits_path}") from exc
+
+        if not isinstance(splits, list) or not splits:
+            raise ValueError(f"Invalid nnUNet splits file (expected non-empty list): {splits_path}")
+
+        requested_fold = int(self.pipeline_config.fold)
+        if requested_fold < 0 or requested_fold >= len(splits):
+            raise ValueError(
+                f"Requested fold {requested_fold} is out of range for {splits_path}. "
+                f"Available folds: 0..{len(splits) - 1}"
+            )
+
+    def _load_dataset_split_json(self, split_path: Path) -> list[dict[str, list[str]]]:
+        with open(split_path, "r") as f:
+            raw = json.load(f)
+
+        if not isinstance(raw, list) or not raw:
+            raise ValueError(f"Invalid split.json format (expected non-empty list): {split_path}")
+
+        def _ensure_list_str(x: Any, field: str) -> list[str]:
+            if x is None:
+                return []
+            if not isinstance(x, list) or not all(isinstance(i, str) for i in x):
+                raise ValueError(f"Invalid split.json field '{field}' in {split_path}")
+            return x
+
+        splits: list[dict[str, list[str]]] = []
+        for entry in raw:
+            if not isinstance(entry, dict):
+                raise ValueError(f"Invalid split.json entry (expected dict): {split_path}")
+            train = _ensure_list_str(entry.get("train"), "train")
+            val = _ensure_list_str(entry.get("val"), "val")
+            if not train or not val:
+                raise ValueError(
+                    f"split.json must define non-empty 'train' and 'val' lists: {split_path}"
+                )
+            splits.append({"train": train, "val": val})
+
+        return splits
+
+    def _generate_small_dataset_splits_from_imagestr(self) -> list[dict[str, list[str]]]:
+        # nnUNet keys are case identifiers without the _0000 modality suffix
+        training_images = sorted(self.images_tr_dir.glob("*_0000.nii.gz"))
+        keys = [p.name.replace("_0000.nii.gz", "") for p in training_images]
+
+        if len(keys) < 2:
+            raise ValueError(
+                f"Need at least 2 training cases for nnUNet (found {len(keys)} in {self.images_tr_dir})."
+            )
+
+        n_splits = min(5, len(keys))
+        # Leave-one-out style folds: each fold validates on one case
+        splits: list[dict[str, list[str]]] = []
+        for i in range(n_splits):
+            val_key = keys[i]
+            train_keys = [k for k in keys if k != val_key]
+            splits.append({"train": train_keys, "val": [val_key]})
+        return splits
 
     def _nnunet_predict(self) -> None:
         env = self._nnunet_env()

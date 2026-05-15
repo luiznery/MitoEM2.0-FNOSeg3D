@@ -21,6 +21,11 @@ dev = [
     "ruff",
 ]
 
+[project.scripts]
+mitoem2-train = "mitoem2.scripts.train:main"
+mitoem2-evaluate = "mitoem2.scripts.evaluate:main"
+mitoem2-inference = "mitoem2.scripts.inference:main"
+
 [tool.setuptools]
 packages = ["mitoem2"]
 

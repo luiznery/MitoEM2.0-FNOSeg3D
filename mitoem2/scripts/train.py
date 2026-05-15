@@ -18,7 +18,7 @@ def main():
         "--method",
         type=str,
         required=True,
-        choices=["mitonet", "microsam", "nnunet"],
+        choices=["mitonet", "microsam", "nnunet", "fnoseg3d"],
         help="Method to train",
     )
     parser.add_argument(
@@ -68,6 +68,14 @@ def main():
     parser.add_argument("--nnunet-skip-prediction", action="store_true", help="Skip nnUNet prediction step")
     parser.add_argument("--nnunet-skip-postprocess", action="store_true", help="Skip post-processing step")
     parser.add_argument("--nnunet-skip-evaluation", action="store_true", help="Skip evaluation step")
+
+    # FNOSeg3D-specific options
+    parser.add_argument("--epochs", type=int, help="Number of epochs for FNOSeg3D training")
+    parser.add_argument("--batch-size", type=int, help="Batch size for FNOSeg3D training")
+    parser.add_argument("--learning-rate", type=float, help="Learning rate for FNOSeg3D training")
+    parser.add_argument("--filters", type=int, help="Number of filters for FNOSeg3D model")
+    parser.add_argument("--modes", type=int, help="Number of frequency modes for FNOSeg3D model")
+    parser.add_argument("--blocks", type=int, help="Number of FNO blocks for FNOSeg3D model")
 
     args = parser.parse_args()
 
@@ -138,6 +146,17 @@ def main():
             pipeline_cfg.skip_postprocess = True
         if args.nnunet_skip_evaluation:
             pipeline_cfg.skip_evaluation = True
+
+    # Update FNOSeg3D-specific configuration overrides
+    if args.method == "fnoseg3d":
+        from mitoem2.configs.config import FNOSeg3DConfig
+        if isinstance(config, FNOSeg3DConfig):
+            if args.epochs is not None:
+                config.training.n_epochs = args.epochs
+            if args.batch_size is not None:
+                config.training.batch_size = args.batch_size
+            if args.learning_rate is not None:
+                config.training.learning_rate = args.learning_rate
 
     # Setup logging
     # Ensure config attributes are objects, not dicts
@@ -225,6 +244,28 @@ def main():
         trainer = NNUNetTrainer.from_config(config, logger=logger)
         trainer.run_pipeline()
         return
+    elif args.method == "fnoseg3d":
+        from mitoem2.training.fnoseg3d_trainer import FNOSeg3DTrainer
+
+        # Create trainer with model parameter overrides if specified
+        trainer = FNOSeg3DTrainer.from_config(
+            config,
+            filters=args.filters,
+            num_modes=args.modes,
+            num_transform_blocks=args.blocks,
+        )
+        # Get n_epochs from training config
+        if hasattr(config, "training"):
+            if isinstance(config.training, dict):
+                n_epochs = config.training.get("n_epochs", 100)
+            else:
+                n_epochs = getattr(config.training, "n_epochs", 100)
+        else:
+            n_epochs = 100
+        trainer.train(
+            num_epochs=n_epochs,
+            checkpoint_path=Path(args.resume) if args.resume else None,
+        )
     else:
         raise ValueError(f"Unsupported method: {args.method}")
 

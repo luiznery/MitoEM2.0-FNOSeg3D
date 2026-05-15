@@ -62,3 +62,10 @@ htmlcov/
 dist/
 build/
 *.egg-info
+
+
+datasets/*
+scripts/hold*
+scripts/code/hold*
+
+nnunet*/*
