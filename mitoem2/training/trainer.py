@@ -231,7 +231,10 @@ class BaseTrainer(ABC):
             # Log metrics
             logger.info(f"Epoch {epoch}/{num_epochs - 1}")
             for key, value in metrics.items():
-                logger.info(f"  {key}: {value:.4f}")
+                if isinstance(value, list):
+                    logger.info(f"  {key}: {value}")
+                else:
+                    logger.info(f"  {key}: {value:.4f}")
 
             # Call epoch end callbacks
             for callback in self.callbacks:

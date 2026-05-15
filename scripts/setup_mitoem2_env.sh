@@ -190,6 +190,39 @@ PY
     fi
 }
 
+ensure_ibm_submodule() {
+    # Ensure IBM's multimodal-3d-image-segmentation is available under third_party/
+    THIRD_PARTY_DIR="$REPO_DIR/third_party"
+    IBM_DIR="$THIRD_PARTY_DIR/multimodal-3d-image-segmentation"
+
+    mkdir -p "$THIRD_PARTY_DIR"
+
+    if [ -d "$IBM_DIR" ] && [ "$(ls -A "$IBM_DIR")" ]; then
+        echo "IBM repo already present at $IBM_DIR"
+        # Try to initialize as submodule if possible
+        if git rev-parse --git-dir >/dev/null 2>&1; then
+            git submodule init "$IBM_DIR" 2>/dev/null || true
+            git submodule update --init --recursive "$IBM_DIR" 2>/dev/null || true
+        fi
+        return
+    fi
+
+    # If in a git repo, add as submodule; otherwise fall back to clone
+    if git rev-parse --git-dir >/dev/null 2>&1; then
+        echo "Adding IBM repo as git submodule..."
+        git submodule add https://github.com/IBM/multimodal-3d-image-segmentation.git "$IBM_DIR" || {
+            echo "git submodule add failed; falling back to git clone..."
+            rm -rf "$IBM_DIR"
+            git clone https://github.com/IBM/multimodal-3d-image-segmentation.git "$IBM_DIR"
+        }
+        git submodule update --init --recursive "$IBM_DIR" || true
+    else
+        echo "Not a git repo; cloning IBM repo into $IBM_DIR"
+        rm -rf "$IBM_DIR"
+        git clone https://github.com/IBM/multimodal-3d-image-segmentation.git "$IBM_DIR"
+    fi
+}
+
 create_activation_hook() {
     mkdir -p "$ENV_PREFIX/etc/conda/activate.d"
     cat > "$ENV_PREFIX/etc/conda/activate.d/ensure-mitoem2-python.sh" <<'EOF'
@@ -244,6 +277,7 @@ PY
 
 install_miniforge
 ensure_bashrc_block
+ensure_ibm_submodule
 patch_repo_files
 create_or_update_env
 verify_env
