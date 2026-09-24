@@ -1,0 +1,130 @@
+<mxfile host="app.diagrams.net">
+  <diagram id="fno-exp" name="FNO experiments">
+<mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1654" pageHeight="1169" math="0" shadow="0">
+  <root>
+    <mxCell id="0"/>
+    <mxCell id="1" parent="0"/>
+    <mxCell id="title" value="&lt;b&gt;&lt;font style=&quot;font-size: 22px&quot;&gt;Is the FNO resolution invariant? — data and the two experiments&lt;/font&gt;&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;fontFamily=Helvetica;" vertex="1" parent="1">
+      <mxGeometry x="40" y="20" width="900" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="dataGroup" value="DATA — one scene, four resolutions (image pyramid)" style="swimlane;html=1;startSize=36;fontSize=15;fontStyle=1;fillColor=#F7F6F1;strokeColor=#14213D;fontColor=#14213D;rounded=1;arcSize=6;" vertex="1" parent="1">
+      <mxGeometry x="40" y="80" width="1560" height="300" as="geometry"/>
+    </mxCell>
+    <mxCell id="raw" value="Raw EM volume&#10;+ instance labels&#10;(pyramidal storage)" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#14213D;strokeColor=#14213D;fontColor=#F7F6F1;fontSize=13;" vertex="1" parent="dataGroup">
+      <mxGeometry x="40" y="80" width="170" height="130" as="geometry"/>
+    </mxCell>
+    <mxCell id="L0" value="&lt;b&gt;L0&lt;/b&gt; native&#10;256 × 256 px" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#14213D;strokeColor=none;fontColor=#F7F6F1;fontSize=14;" vertex="1" parent="dataGroup">
+      <mxGeometry x="300" y="60" width="200" height="200" as="geometry"/>
+    </mxCell>
+    <mxCell id="L1" value="&lt;b&gt;L1&lt;/b&gt; ÷2&#10;128 × 128 px" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1F3A5F;strokeColor=none;fontColor=#F7F6F1;fontSize=14;" vertex="1" parent="dataGroup">
+      <mxGeometry x="560" y="110" width="150" height="150" as="geometry"/>
+    </mxCell>
+    <mxCell id="L2" value="&lt;b&gt;L2&lt;/b&gt; ÷4&#10;64 × 64 px" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2E5A87;strokeColor=none;fontColor=#F7F6F1;fontSize=14;" vertex="1" parent="dataGroup">
+      <mxGeometry x="770" y="150" width="110" height="110" as="geometry"/>
+    </mxCell>
+    <mxCell id="L3" value="&lt;b&gt;L3&lt;/b&gt; ÷8&#10;32 px" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#4A7FAE;strokeColor=none;fontColor=#F7F6F1;fontSize=13;" vertex="1" parent="dataGroup">
+      <mxGeometry x="940" y="180" width="80" height="80" as="geometry"/>
+    </mxCell>
+    <mxCell id="fov" value="Same physical area in every crop — only the pixel count changes" style="text;html=1;align=center;verticalAlign=middle;fontSize=13;fontStyle=2;fontColor=#4A5568;" vertex="1" parent="dataGroup">
+      <mxGeometry x="300" y="262" width="720" height="30" as="geometry"/>
+    </mxCell>
+    <mxCell id="rules" value="&lt;b&gt;Rules&lt;/b&gt;&lt;br&gt;• Split by whole volume: train / val / test, same split at every level&lt;br&gt;• Images from the pyramid (anti-aliased)&lt;br&gt;• Labels downsampled per instance (majority vote), not nearest-neighbour&lt;br&gt;• 2D: every slice is a sample; instances scored per slice&lt;br&gt;• Foreground + boundary → one fixed watershed (params in nm)" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=12;fillColor=#FFFFFF;strokeColor=#DCD9CF;fontColor=#14213D;fontSize=13;" vertex="1" parent="dataGroup">
+      <mxGeometry x="1080" y="60" width="450" height="200" as="geometry"/>
+    </mxCell>
+    <mxCell id="e_raw_L0" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#14213D;endArrow=block;endFill=1;" edge="1" parent="dataGroup" source="raw" target="L0"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <mxCell id="e_L0_L1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#14213D;endArrow=block;endFill=1;" edge="1" parent="dataGroup" source="L0" target="L1"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <mxCell id="e_L1_L2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#14213D;endArrow=block;endFill=1;" edge="1" parent="dataGroup" source="L1" target="L2"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <mxCell id="e_L2_L3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#14213D;endArrow=block;endFill=1;" edge="1" parent="dataGroup" source="L2" target="L3"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <mxCell id="exp1Group" value="EXPERIMENT 1 — resolution: train at one level, test at all four" style="swimlane;html=1;startSize=36;fontSize=15;fontStyle=1;fillColor=#ECEAE2;strokeColor=#14213D;fontColor=#14213D;rounded=1;arcSize=6;" vertex="1" parent="1">
+      <mxGeometry x="40" y="410" width="760" height="500" as="geometry"/>
+    </mxCell>
+    <mxCell id="models1" value="&lt;b&gt;Models (3 seeds each)&lt;/b&gt;&lt;br&gt;FNO strict (neuraloperator)&lt;br&gt;HNOSeg-XS, with / without input conv&lt;br&gt;2D U-Net (control)" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=10;fillColor=#FFFFFF;strokeColor=#DCD9CF;fontColor=#14213D;fontSize=13;" vertex="1" parent="exp1Group">
+      <mxGeometry x="30" y="60" width="290" height="100" as="geometry"/>
+    </mxCell>
+    <mxCell id="trainL0" value="Train at &lt;b&gt;L0&lt;/b&gt; (fine)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#14213D;strokeColor=none;fontColor=#F7F6F1;fontSize=14;" vertex="1" parent="exp1Group">
+      <mxGeometry x="60" y="200" width="200" height="60" as="geometry"/>
+    </mxCell>
+    <mxCell id="trainL2" value="Train at &lt;b&gt;L2&lt;/b&gt; (coarse)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2E5A87;strokeColor=none;fontColor=#F7F6F1;fontSize=14;" vertex="1" parent="exp1Group">
+      <mxGeometry x="60" y="340" width="200" height="60" as="geometry"/>
+    </mxCell>
+    <mxCell id="t0" value="Test L0" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#14213D;strokeColor=none;fontColor=#F7F6F1;fontSize=13;" vertex="1" parent="exp1Group">
+      <mxGeometry x="440" y="190" width="110" height="46" as="geometry"/>
+    </mxCell>
+    <mxCell id="t1" value="Test L1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1F3A5F;strokeColor=none;fontColor=#F7F6F1;fontSize=13;" vertex="1" parent="exp1Group">
+      <mxGeometry x="440" y="252" width="110" height="46" as="geometry"/>
+    </mxCell>
+    <mxCell id="t2" value="Test L2" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2E5A87;strokeColor=none;fontColor=#F7F6F1;fontSize=13;" vertex="1" parent="exp1Group">
+      <mxGeometry x="440" y="314" width="110" height="46" as="geometry"/>
+    </mxCell>
+    <mxCell id="t3" value="Test L3" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#4A7FAE;strokeColor=none;fontColor=#F7F6F1;fontSize=13;" vertex="1" parent="exp1Group">
+      <mxGeometry x="440" y="376" width="110" height="46" as="geometry"/>
+    </mxCell>
+    <mxCell id="baseline1" value="&lt;b&gt;Resampling baseline&lt;/b&gt;&lt;br&gt;resize test image to training level → predict → resize back" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=10;fillColor=#FFFFFF;strokeColor=#DCD9CF;fontColor=#14213D;fontSize=12;dashed=1;" vertex="1" parent="exp1Group">
+      <mxGeometry x="380" y="60" width="350" height="70" as="geometry"/>
+    </mxCell>
+    <mxCell id="readout1" value="&lt;b&gt;Read-out&lt;/b&gt;&lt;br&gt;Retained accuracy = acc(test level) ÷ acc(model trained there)&lt;br&gt;Confirmed if FNO ≥ 0.9 and flat, U-Net drops, FNO ≥ resampling" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=10;fillColor=#14213D;strokeColor=none;fontColor=#F7F6F1;fontSize=12;" vertex="1" parent="exp1Group">
+      <mxGeometry x="30" y="430" width="700" height="55" as="geometry"/>
+    </mxCell>
+    <mxCell id="dirNote" value="↓ coarser than training&#10;↑ finer than training (super-resolution)" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontStyle=2;fontColor=#4A5568;" vertex="1" parent="exp1Group">
+      <mxGeometry x="570" y="270" width="180" height="60" as="geometry"/>
+    </mxCell>
+    <mxCell id="e_m_t0" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#14213D;endArrow=block;endFill=1;" edge="1" parent="exp1Group" source="models1" target="trainL0"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <mxCell id="e_m_t2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#14213D;endArrow=block;endFill=1;" edge="1" parent="exp1Group" source="models1" target="trainL2"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <mxCell id="e_L0_t0" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#14213D;endArrow=block;endFill=1;" edge="1" parent="exp1Group" source="trainL0" target="t0"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <mxCell id="e_L0_t1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#C2410C;endArrow=block;endFill=1;" edge="1" parent="exp1Group" source="trainL0" target="t1"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <mxCell id="e_L0_t2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#C2410C;endArrow=block;endFill=1;" edge="1" parent="exp1Group" source="trainL0" target="t2"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <mxCell id="e_L0_t3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#C2410C;endArrow=block;endFill=1;" edge="1" parent="exp1Group" source="trainL0" target="t3"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <mxCell id="e_L2_t0" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#0E7490;endArrow=block;endFill=1;" edge="1" parent="exp1Group" source="trainL2" target="t0"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <mxCell id="e_L2_t1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#0E7490;endArrow=block;endFill=1;" edge="1" parent="exp1Group" source="trainL2" target="t1"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <mxCell id="e_L2_t2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#14213D;endArrow=block;endFill=1;" edge="1" parent="exp1Group" source="trainL2" target="t2"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <mxCell id="e_L2_t3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#C2410C;endArrow=block;endFill=1;" edge="1" parent="exp1Group" source="trainL2" target="t3"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <mxCell id="exp2Group" value="EXPERIMENT 2 — data: how many training images are needed?" style="swimlane;html=1;startSize=36;fontSize=15;fontStyle=1;fillColor=#ECEAE2;strokeColor=#14213D;fontColor=#14213D;rounded=1;arcSize=6;" vertex="1" parent="1">
+      <mxGeometry x="840" y="410" width="760" height="500" as="geometry"/>
+    </mxCell>
+    <mxCell id="models2" value="&lt;b&gt;Models (3 seeds each)&lt;/b&gt;&lt;br&gt;FNO strict + 2D U-Net&lt;br&gt;trained at the best level from Exp. 1" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=10;fillColor=#FFFFFF;strokeColor=#DCD9CF;fontColor=#14213D;fontSize=13;" vertex="1" parent="exp2Group">
+      <mxGeometry x="30" y="60" width="290" height="80" as="geometry"/>
+    </mxCell>
+    <mxCell id="n1" value="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#14213D;strokeColor=none;fontColor=#F7F6F1;fontSize=14;fontStyle=1;" vertex="1" parent="exp2Group">
+      <mxGeometry x="30" y="190" width="60" height="50" as="geometry"/>
+    </mxCell>
+    <mxCell id="n2" value="2" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1F3A5F;strokeColor=none;fontColor=#F7F6F1;fontSize=14;fontStyle=1;" vertex="1" parent="exp2Group">
+      <mxGeometry x="100" y="190" width="60" height="50" as="geometry"/>
+    </mxCell>
+    <mxCell id="n4" value="4" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2E5A87;strokeColor=none;fontColor=#F7F6F1;fontSize=14;fontStyle=1;" vertex="1" parent="exp2Group">
+      <mxGeometry x="170" y="190" width="60" height="50" as="geometry"/>
+    </mxCell>
+    <mxCell id="n8" value="8" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#4A7FAE;strokeColor=none;fontColor=#F7F6F1;fontSize=14;fontStyle=1;" vertex="1" parent="exp2Group">
+      <mxGeometry x="240" y="190" width="60" height="50" as="geometry"/>
+    </mxCell>
+    <mxCell id="n16" value="16" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#6B9BC3;strokeColor=none;fontColor=#F7F6F1;fontSize=14;fontStyle=1;" vertex="1" parent="exp2Group">
+      <mxGeometry x="310" y="190" width="60" height="50" as="geometry"/>
+    </mxCell>
+    <mxCell id="nall" value="all" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C2410C;strokeColor=none;fontColor=#F7F6F1;fontSize=14;fontStyle=1;" vertex="1" parent="exp2Group">
+      <mxGeometry x="380" y="190" width="60" height="50" as="geometry"/>
+    </mxCell>
+    <mxCell id="nlabel" value="training volumes — nested subsets (each contains the smaller ones)&#10;report N also as annotated instances and area (density varies)" style="text;html=1;align=left;verticalAlign=top;fontSize=12;fontStyle=2;fontColor=#4A5568;" vertex="1" parent="exp2Group">
+      <mxGeometry x="30" y="245" width="420" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="test2same" value="Test at training level" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#14213D;strokeColor=none;fontColor=#F7F6F1;fontSize=13;" vertex="1" parent="exp2Group">
+      <mxGeometry x="520" y="170" width="200" height="46" as="geometry"/>
+    </mxCell>
+    <mxCell id="test2cross" value="Test at the other levels" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0E7490;strokeColor=none;fontColor=#F7F6F1;fontSize=13;" vertex="1" parent="exp2Group">
+      <mxGeometry x="520" y="236" width="200" height="46" as="geometry"/>
+    </mxCell>
+    <mxCell id="curve" value="&lt;b&gt;Read-out: learning curve&lt;/b&gt;&lt;br&gt;accuracy vs. N, per model, same-level and cross-level&lt;br&gt;→ smallest N reaching 95 % of full-data accuracy&lt;br&gt;→ does cross-level need more data than same-level?" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=10;fillColor=#FFFFFF;strokeColor=#DCD9CF;fontColor=#14213D;fontSize=12;" vertex="1" parent="exp2Group">
+      <mxGeometry x="30" y="310" width="700" height="90" as="geometry"/>
+    </mxCell>
+    <mxCell id="readout2" value="&lt;b&gt;Metrics (both experiments)&lt;/b&gt;: AP@0.5, AP@0.75, PQ · foreground Dice as diagnostic · split by instance size (small ones vanish at coarse levels)" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=10;fillColor=#14213D;strokeColor=none;fontColor=#F7F6F1;fontSize=12;" vertex="1" parent="exp2Group">
+      <mxGeometry x="30" y="430" width="700" height="55" as="geometry"/>
+    </mxCell>
+    <mxCell id="e_m2_n" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#14213D;endArrow=block;endFill=1;" edge="1" parent="exp2Group" source="models2" target="n1"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <mxCell id="e_n_same" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#14213D;endArrow=block;endFill=1;" edge="1" parent="exp2Group" source="nall" target="test2same"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <mxCell id="e_n_cross" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#0E7490;endArrow=block;endFill=1;" edge="1" parent="exp2Group" source="nall" target="test2cross"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <mxCell id="e_tests_curve" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#14213D;endArrow=block;endFill=1;" edge="1" parent="exp2Group" source="test2cross" target="curve"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <mxCell id="e_data_exp1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#14213D;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="dataGroup" target="exp1Group"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <mxCell id="e_data_exp2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#14213D;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="dataGroup" target="exp2Group"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <mxCell id="e_exp1_exp2" value="best level" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#C2410C;strokeWidth=2;endArrow=block;endFill=1;fontColor=#C2410C;fontSize=12;" edge="1" parent="1" source="exp1Group" target="exp2Group"><mxGeometry relative="1" as="geometry"/></mxCell>
+  </root>
+</mxGraphModel>
+  </diagram>
+</mxfile>
