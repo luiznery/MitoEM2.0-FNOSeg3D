@@ -81,8 +81,8 @@ def main(argv=None):
     factors = meta["factors"]
     block = np.max(np.array(factors), axis=0)
     lab = np.load(d / "lab_L0.npy", mmap_mode="r")
-    size = [min(c, s) // b * b for c, s, b in zip(a.crop, lab.shape, block)]
-    start = choose_crop(lab, size, block)
+    size = [int(min(c, s) // b * b) for c, s, b in zip(a.crop, lab.shape, block)]
+    start = [int(s) for s in choose_crop(lab, size, block)]
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
 
@@ -143,7 +143,7 @@ def main(argv=None):
     with gzip.open(out / "masks.bin.gz", "wb", compresslevel=9) as fh:
         for b in blobs:
             fh.write(b)
-    json.dump(man, open(out / "manifest.json", "w"), indent=1)
+    json.dump(man, open(out / "manifest.json", "w"), indent=1, default=lambda o: o.item() if hasattr(o, "item") else str(o))
     print(f"wrote {out}: {sorted(p.name for p in out.iterdir())}", flush=True)
 
 
