@@ -46,8 +46,8 @@ def choose_crop(lab: np.ndarray, size, block) -> list[int]:
     return best_start
 
 
-def atlases(stack: np.ndarray, out: Path, stem: str, max_side: int = 2560, quality: int = 88) -> dict:
-    """z-slices tiled row-major into grayscale JPEG atlases of at most max_side pixels per side."""
+def atlases(stack: np.ndarray, out: Path, stem: str, max_side: int = 2560, quality: int = 72, fmt: str = "webp") -> dict:
+    """z-slices tiled row-major into grayscale image atlases (WebP or JPEG) of at most max_side pixels per side."""
     n, h, w = stack.shape
     cols = max(1, min(max_side // w, int(np.ceil(np.sqrt(n)))))
     rows = max(1, min(max_side // h, int(np.ceil(n / cols))))
@@ -59,8 +59,8 @@ def atlases(stack: np.ndarray, out: Path, stem: str, max_side: int = 2560, quali
         canvas = np.zeros((r * h, cols * w), np.uint8)
         for j, sl in enumerate(part):
             canvas[(j // cols) * h:(j // cols + 1) * h, (j % cols) * w:(j % cols + 1) * w] = sl
-        name = f"{stem}_{i}.jpg"
-        Image.fromarray(canvas).save(out / name, quality=quality)
+        name = f"{stem}_{i}.{fmt}"
+        Image.fromarray(canvas).save(out / name, quality=quality, **({"method": 6} if fmt == "webp" else {}))
         files.append(name)
     return {"files": files, "cols": cols, "per": per, "w": w, "h": h, "n": n}
 
@@ -72,6 +72,10 @@ def main(argv=None):
     p.add_argument("--crop", type=int, nargs=3, required=True, help="crop size in L0 voxels (z y x)")
     p.add_argument("--runs", nargs="+", required=True)
     p.add_argument("--volume", default=None, help="test volume (default: the first)")
+    p.add_argument("--image-format", default="webp", choices=["webp", "jpg"])
+    p.add_argument("--quality", type=int, default=72)
+    p.add_argument("--images-only", action="store_true",
+                   help="rewrite only the image atlases of an existing export (same crop, predictions kept)")
     a = p.parse_args(argv)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     meta = load_meta(a.data_dir)
@@ -81,9 +85,21 @@ def main(argv=None):
     factors = meta["factors"]
     block = np.max(np.array(factors), axis=0)
     lab = np.load(d / "lab_L0.npy", mmap_mode="r")
+    out = Path(a.out)
+    if a.images_only:
+        man = json.load(open(out / "manifest.json"))
+        start, size = man["crop_start"], man["crop_size"]
+        for old in out.glob("em_L*"):
+            old.unlink()
+        for k, f in enumerate(factors):
+            img = np.load(d / f"img_L{k}.npy", mmap_mode="r")
+            slk = tuple(slice(s // b, (s + n) // b) for s, n, b in zip(start, size, f))
+            man["levels"][f"L{k}"] = atlases(np.asarray(img[slk]), out, f"em_L{k}", quality=a.quality, fmt=a.image_format)
+        json.dump(man, open(out / "manifest.json", "w"), indent=1)
+        print(f"rewrote images in {out}: {sorted((p.name, p.stat().st_size) for p in out.iterdir())}", flush=True)
+        return
     size = [int(min(c, s) // b * b) for c, s, b in zip(a.crop, lab.shape, block)]
     start = [int(s) for s in choose_crop(lab, size, block)]
-    out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
 
     man = {"dataset": meta["dataset"], "volume": v, "crop_start": start, "crop_size": size, "factors": factors,
@@ -104,7 +120,7 @@ def main(argv=None):
     for k, f in enumerate(factors):
         img = np.load(d / f"img_L{k}.npy", mmap_mode="r")
         slk = tuple(slice(s // b, (s + n) // b) for s, n, b in zip(start, size, f))
-        man["levels"][f"L{k}"] = atlases(np.asarray(img[slk]), out, f"em_L{k}")
+        man["levels"][f"L{k}"] = atlases(np.asarray(img[slk]), out, f"em_L{k}", quality=a.quality, fmt=a.image_format)
     for run in a.runs:
         run = Path(run)
         cfg = json.load(open(run / "config.json"))
