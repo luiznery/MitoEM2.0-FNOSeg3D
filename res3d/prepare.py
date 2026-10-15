@@ -10,6 +10,7 @@ Datasets that already have a meta.json are skipped. ``--max-xy N`` keeps the cen
 from __future__ import annotations
 
 import argparse
+import http.client
 import shutil
 import time
 import urllib.error
@@ -20,6 +21,38 @@ from pathlib import Path
 from .data import prepare
 
 URL = "https://zenodo.org/records/17635006/files/{}.zip?download=1"
+
+
+def download(url: str, dst: Path, attempts: int = 60) -> None:
+    """Download with HTTP range requests, resuming after dropped connections (Zenodo resets long transfers)."""
+    tmp = dst.with_suffix(".part")
+    total = None
+    for attempt in range(attempts):
+        have = tmp.stat().st_size if tmp.exists() else 0
+        if total is not None and have >= total:
+            break
+        req = urllib.request.Request(url, headers={"Range": f"bytes={have}-"} if have else {})
+        try:
+            with urllib.request.urlopen(req, timeout=300) as r:
+                if r.status == 206:
+                    total = int(r.headers["Content-Range"].split("/")[-1])
+                else:  # the server sent the whole file
+                    total = int(r.headers.get("Content-Length") or 0) or None
+                    tmp.unlink(missing_ok=True)
+                with open(tmp, "ab") as f:
+                    shutil.copyfileobj(r, f, length=1 << 24)
+            if total is None or tmp.stat().st_size >= total:
+                break
+        except (urllib.error.URLError, ConnectionError, OSError, http.client.HTTPException) as e:
+            if isinstance(e, urllib.error.HTTPError) and e.code not in (429, 500, 502, 503, 504):
+                raise
+            done = tmp.stat().st_size if tmp.exists() else 0
+            print(f"download interrupted at {done / 1e9:.2f} GB ({e}); resuming", flush=True)
+            time.sleep(min(60, 5 * (attempt + 1)))
+    else:
+        raise RuntimeError(f"{url}: download did not finish after {attempts} attempts")
+    tmp.rename(dst)
+    print(f"downloaded {dst.name}: {dst.stat().st_size / 1e9:.2f} GB", flush=True)
 
 
 def main(argv=None):
@@ -42,21 +75,9 @@ def main(argv=None):
                 continue
             shutil.rmtree(Path(a.out) / name)
         z = Path(a.zip_dir) / f"{name}.zip"
-        for attempt in range(6):
-            if z.exists():
-                break
+        if not z.exists():
             print(f"downloading {name}", flush=True)
-            tmp = z.with_suffix(".part")
-            try:
-                with urllib.request.urlopen(URL.format(name), timeout=600) as r, open(tmp, "wb") as f:
-                    shutil.copyfileobj(r, f, length=1 << 24)
-                tmp.rename(z)
-            except (urllib.error.URLError, ConnectionError, OSError) as e:  # rate limit, dropped connection
-                if (isinstance(e, urllib.error.HTTPError) and e.code != 429) or attempt == 5:
-                    raise
-                print(f"download failed ({e}); retrying", flush=True)
-                tmp.unlink(missing_ok=True)
-                time.sleep(30 * (attempt + 1))
+            download(URL.format(name), z)
         zipfile.ZipFile(z).extractall(a.raw_dir)
         prepare(str(Path(a.raw_dir) / name), a.out, mode, a.max_xy, a.crop)
         shutil.rmtree(Path(a.raw_dir) / name, ignore_errors=True)
