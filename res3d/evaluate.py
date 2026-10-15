@@ -36,6 +36,12 @@ def parse_args(argv=None):
     p.add_argument("--overlap", type=float, default=0.25)
     p.add_argument("--min-um3", type=float, default=0.001, help="drop predicted components smaller than this")
     p.add_argument("--out-name", default="eval")
+    p.add_argument("--input-lowpass", action="store_true",
+                   help="diagnostic: Gaussian-smooth the input of finer levels (sigma = half the block factor to the "
+                        "training level per axis), i.e. remove the detail and noise the model never saw in training")
+    p.add_argument("--input-from-train-level", action="store_true",
+                   help="diagnostic: at finer levels, feed the training-level image interpolated (linear) to the finer "
+                        "grid: the same content on a finer grid, so only the grid changes")
     return p.parse_args(argv)
 
 
@@ -130,7 +136,8 @@ def main(argv=None):
     cfg = json.load(open(run / "config.json"))
     meta = load_meta(a.data_dir)
     net = build_model(cfg["model"], cfg["filters"], cfg["blocks"], cfg["modes"], tuple(cfg["radii"]),
-                      train_window=min(cfg["window"][1:]), unet_channels=cfg["unet_channels"]).to(dev)
+                      train_window=min(cfg["window"][1:]), unet_channels=cfg["unet_channels"],
+                      input_layer=cfg.get("input_layer", "conv"), input_radius=cfg.get("input_radius", 2 / 64)).to(dev)
     net.load_state_dict(torch.load(run / "final.pt", map_location=dev, weights_only=False)["net"])
     net.eval()
     out = run / a.out_name
@@ -147,6 +154,13 @@ def main(argv=None):
         for lv in a.levels:
             t0 = time.time()
             img = np.load(d / f"img_L{lv}.npy")
+            if a.input_from_train_level and lv < cfg["level"]:
+                src = np.load(d / f"img_L{cfg['level']}.npy").astype(np.float32)
+                img = ndimage.zoom(src, [t / s for t, s in zip(img.shape, src.shape)], order=1, grid_mode=True,
+                                   mode="nearest")
+            if a.input_lowpass and lv < cfg["level"]:
+                r = [b // c for b, c in zip(meta["factors"][cfg["level"]], meta["factors"][lv])]
+                img = ndimage.gaussian_filter(img.astype(np.float32), [0.5 * x if x > 1 else 0 for x in r])
             win = window_size(meta, lv, cfg["level"], cfg["window"])
             prob = predict(net, img, win, a.overlap, st["mean"], st["std"], dev)
             ratio = [b // c for b, c in zip(meta["factors"][lv], meta["factors"][0])]

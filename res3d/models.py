@@ -101,6 +101,38 @@ class PhysLocalBranch3d(nn.Module):
         return self.spectral(x) + depthwise_conv3d_fft(x, k)
 
 
+class PhysInputConv3d(nn.Module):
+    """Input layer without filters sized in voxels: a dense (in -> out channels) local integral kernel of a fixed
+    physical radius (window units), trilinear on a 5^3 control grid, applied with FFTs at the input resolution with
+    quadrature weights, then 2x2x2 average pooling (the stride-2 step), bias and SELU."""
+
+    def __init__(self, in_channels: int, out_channels: int, radius: float, ref_size: int, n_ctrl: int = 5):
+        super().__init__()
+        self.radius, self.ref_size = radius, ref_size
+        self.weight = nn.Parameter(torch.randn(out_channels * in_channels, 1, n_ctrl, n_ctrl, n_ctrl) * 0.2)
+        self.bias = nn.Parameter(torch.zeros(1, out_channels, 1, 1, 1))
+        self.cin, self.cout = in_channels, out_channels
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        size = x.shape[-3:]
+        k = PhysLocalConv3d.kernel(self, size)  # (cout * cin, 1, kd, kh, kw), same parameterisation as the blocks
+        ks = k.shape[-3:]
+        m = [t // 2 for t in ks]
+        lens = [_fast_len(n + h) for n, h in zip(size, m)]
+        xf = torch.fft.rfftn(x.float(), s=lens, dim=(-3, -2, -1))  # (b, cin, ...)
+        k = k.view(self.cout, self.cin, *ks)
+        out = []
+        for c0 in range(0, self.cout, 8):  # a few output channels at a time: full-resolution spectra are large
+            kc = k[c0:c0 + 8]
+            g = x.new_zeros((kc.shape[0], self.cin, *lens), dtype=torch.float32)
+            g[..., :ks[0], :ks[1], :ks[2]] = kc.float()
+            g = torch.roll(g, shifts=[-h for h in m], dims=(-3, -2, -1))
+            kf = torch.fft.rfftn(g, dim=(-3, -2, -1)).conj()
+            y = torch.fft.irfftn(torch.einsum("oi...,bi...->bo...", kf, xf), s=lens, dim=(-3, -2, -1))
+            out.append(F.avg_pool3d(y[..., :size[0], :size[1], :size[2]], 2))
+        return F.selu(torch.cat(out, 1) + self.bias)
+
+
 class _ConvBlock3d(nn.Sequential):
     def __init__(self, cin: int, cout: int):
         super().__init__(nn.Conv3d(cin, cout, 3, padding=1), nn.InstanceNorm3d(cout, affine=True), nn.LeakyReLU(0.01),
@@ -132,15 +164,24 @@ class UNet3D(nn.Module):
 
 
 def build_model(name: str, filters: int = 32, blocks: int = 8, modes: int = 8, radii=(4 / 64, 8 / 64),
-                train_window: int = 96, unet_channels: int = 16, unet_levels: int = 4) -> nn.Module:
+                train_window: int = 96, unet_channels: int = 16, unet_levels: int = 4, input_layer: str = "conv",
+                input_radius: float = 2 / 64) -> nn.Module:
     """``radii`` are in window units; ``train_window`` (voxels per axis at the training level) sets the reference
-    grid of the quadrature (the grid after the stride-2 input layer, train_window // 2)."""
+    grid of the quadrature (the grid after the stride-2 input layer, train_window // 2). ``input_layer``: "conv"
+    (IBM's learned 2x2x2 stride-2 convolution, sized in voxels), "avgpool" (2x2x2 average + 1x1 convolution + SELU)
+    or "phys" (PhysInputConv3d: a physically sized kernel, then 2x2x2 average)."""
     if name not in MODEL_NAMES:
         raise ValueError(f"unknown model {name!r}; choose from {MODEL_NAMES}")
     if name == "unet3d":
         return UNet3D(1, 2, unet_channels, unet_levels)
     net = NeuralOperatorSeg(1, 2, filters, blocks, (modes, modes, modes), transform_type="Fourier", use_resize=True,
                             output_activation=nn.Identity(), ndim=5)
+    if input_layer == "avgpool":
+        net.conv_in = nn.Sequential(nn.AvgPool3d(2), nn.Conv3d(1, filters, 1), nn.SELU())
+    elif input_layer == "phys":
+        net.conv_in = PhysInputConv3d(1, filters, input_radius, ref_size=train_window)
+    elif input_layer != "conv":
+        raise ValueError(f"unknown input layer {input_layer!r}")
     if name == "fnoseg3d":
         return net
     from .ibm_nets.architectures import NeuralOperatorBlock

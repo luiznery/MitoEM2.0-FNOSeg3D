@@ -39,6 +39,7 @@ def main(argv=None):
     p.add_argument("--filters", type=int, default=32)
     p.add_argument("--modes", type=int, default=8)
     p.add_argument("--skip-check", action="store_true")
+    p.add_argument("--input-layer", default="conv")
     a = p.parse_args(argv)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"device {torch.cuda.get_device_name(0) if dev.type == 'cuda' else 'cpu'}")
@@ -54,7 +55,7 @@ def main(argv=None):
         print(f"FFT check grid {size}, kernel {tuple(k.shape[-3:])}: rel. diff {float((f - d).abs().max() / d.abs().max()):.1e}")
     w = a.window
     for name in a.models:
-        net = build_model(name, filters=a.filters, modes=a.modes, train_window=w).to(dev)
+        net = build_model(name, filters=a.filters, modes=a.modes, train_window=w, input_layer=a.input_layer).to(dev)
         opt = torch.optim.AdamW(net.parameters(), lr=1e-4)
         x = torch.randn(a.batch, 1, w, w, w, device=dev)
         y = (torch.rand(a.batch, w, w, w, device=dev) > 0.8).long()

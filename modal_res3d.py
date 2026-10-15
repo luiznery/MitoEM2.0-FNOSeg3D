@@ -67,6 +67,13 @@ def gpu_job(command: str) -> None:
     _sh(command)
 
 
+@app.function(image=image, volumes=VOLUMES, gpu=GPU, cpu=2, memory=16384, timeout=12 * 3600, retries=2)
+def gpu_job_small(command: str) -> None:
+    """Like gpu_job with less memory reserved (training, and evaluation of the smaller volumes)."""
+    runs_vol.reload()
+    _sh(command)
+
+
 @app.local_entrypoint()
 def cpu(command: str):
     cpu_job.remote(command)

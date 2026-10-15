@@ -46,6 +46,9 @@ def parse_args(argv=None):
     p.add_argument("--modes", type=int, default=8)
     p.add_argument("--radii", type=float, nargs="+", default=[4 / 64, 8 / 64])
     p.add_argument("--unet-channels", type=int, default=16)
+    p.add_argument("--input-layer", default="conv", choices=["conv", "avgpool", "phys"],
+                   help="neural operators: IBM's learned 2x2x2 stride-2 conv, 2x2x2 average + 1x1, or a physically sized kernel")
+    p.add_argument("--input-radius", type=float, default=2 / 64, help="--input-layer phys: kernel radius (window units)")
     p.add_argument("--amp", action="store_true", help="fp16 autocast (U-Net only: the spectral layers need fp32)")
     p.add_argument("--val-windows", type=int, default=12, help="fixed test windows for the curves")
     p.add_argument("--val-l0-every", type=int, default=5, help="epochs between Dice at L0 on the same windows (0 = never)")
@@ -114,7 +117,7 @@ def main(argv=None):
     meta = load_meta(a.data_dir)
     window = tuple(a.window * 3 if len(a.window) == 1 else a.window)
     net = build_model(a.model, a.filters, a.blocks, a.modes, tuple(a.radii), train_window=min(window[1:]),
-                      unet_channels=a.unet_channels).to(dev)
+                      unet_channels=a.unet_channels, input_layer=a.input_layer, input_radius=a.input_radius).to(dev)
     cfg = {**vars(a), "window": window, "n_params": n_params(net), "train_voxel_nm": None}
     vol0 = meta["volumes"][meta["train"][0]]
     cfg["train_voxel_nm"] = vol0["levels"][a.level]["voxel_nm"]
