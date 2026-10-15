@@ -4,7 +4,7 @@ Layout written by ``prepare`` (one folder per dataset):
     <out>/<dataset>/meta.json                 voxel size per level (nm, z y x), volume names, train / test split
     <out>/<dataset>/<volume>/img_L<k>.npy     uint8 image at level k (block average of L0)
     <out>/<dataset>/<volume>/fg_L<k>.npy      uint8 foreground at level k (majority of the block)
-    <out>/<dataset>/<volume>/lab_L0.npy       uint32 instance labels at L0 (scoring reference)
+    <out>/<dataset>/<volume>/lab_L0.npy       instance labels at L0, uint16 or uint32 (scoring reference; test volumes only)
 All arrays are (z, y, x) and cropped to a multiple of the coarsest block, so every level covers the same tissue.
 """
 from __future__ import annotations
@@ -35,35 +35,48 @@ def block_mean(a: np.ndarray, f) -> np.ndarray:
     return out
 
 
-def read_nifti(path: Path):
-    """Array as (z, y, x) and voxel size (z, y, x) in the file's units (nm here)."""
+def read_nifti(path: Path, max_xy: int | None = None):
+    """Array as (z, y, x) and voxel size (z, y, x) in the file's units (nm here). With max_xy, a volume wider than
+    max_xy in x or y is cut to its central max_xy x max_xy region, read in z-slabs so the whole volume is never in
+    memory."""
     import nibabel as nib
     img = nib.load(str(path))
-    a = np.asanyarray(img.dataobj)
+    nx, ny, nz = img.shape[:3]
+    if max_xy and (nx > max_xy or ny > max_xy):
+        x0, y0 = max(0, (nx - max_xy) // 2), max(0, (ny - max_xy) // 2)
+        x1, y1 = min(nx, x0 + max_xy), min(ny, y0 + max_xy)
+        slabs = [np.asarray(img.dataobj[:, :, z:min(nz, z + 16)])[x0:x1, y0:y1] for z in range(0, nz, 16)]
+        a = np.concatenate(slabs, axis=2)
+        print(f"{path.name}: central crop x {x0}:{x1}, y {y0}:{y1} of {nx} x {ny}", flush=True)
+    else:
+        a = np.asanyarray(img.dataobj)
     sx, sy, sz = (float(v) for v in img.header.get_zooms()[:3])
     return np.ascontiguousarray(np.transpose(a, (2, 1, 0))), (sz, sy, sx)
 
 
-def prepare(raw_dir: str, out_dir: str, mode: str) -> dict:
-    """Convert an nnU-Net style MitoEM 2.0 folder (imagesTr, labelsTr, imagesTs, labelsTs) into level pyramids."""
+def prepare(raw_dir: str, out_dir: str, mode: str, max_xy: int | None = None) -> dict:
+    """Convert an nnU-Net style MitoEM 2.0 folder (imagesTr, labelsTr, imagesTs, labelsTs) into level pyramids.
+    ``max_xy``: keep only the central max_xy x max_xy region of wider volumes (recorded in meta.json)."""
     raw, name = Path(raw_dir), Path(raw_dir).name
     out = Path(out_dir) / name
     out.mkdir(parents=True, exist_ok=True)
     factors = LEVEL_FACTORS[mode]
     big = np.max(np.array(factors), axis=0)
-    meta = {"dataset": name, "mode": mode, "factors": factors, "volumes": {}, "train": [], "test": []}
+    meta = {"dataset": name, "mode": mode, "factors": factors, "max_xy": max_xy, "volumes": {}, "train": [], "test": []}
     for side, img_dir, lab_dir in (("train", "imagesTr", "labelsTr"), ("test", "imagesTs", "labelsTs")):
         for img_path in sorted((raw / img_dir).glob("*_0000.nii*")):
             vol = img_path.name.split("_0000.nii")[0]
             lab_path = next((raw / lab_dir).glob(f"{vol}.nii*"))
-            img, spacing = read_nifti(img_path)
-            lab, _ = read_nifti(lab_path)
+            img, spacing = read_nifti(img_path, max_xy)
+            lab, _ = read_nifti(lab_path, max_xy)
             shape = tuple(int(s // b * b) for s, b in zip(img.shape, big))
             img = img[:shape[0], :shape[1], :shape[2]]
-            lab = lab[:shape[0], :shape[1], :shape[2]].astype(np.uint32)
+            lab = lab[:shape[0], :shape[1], :shape[2]]
+            lab = lab.astype(np.uint16 if lab.max() < 65535 else np.uint32)
             d = out / vol
             d.mkdir(exist_ok=True)
-            np.save(d / "lab_L0.npy", lab)
+            if side == "test":
+                np.save(d / "lab_L0.npy", lab)
             fg = (lab > 0).astype(np.uint8)
             levels = []
             for k, f in enumerate(factors):
@@ -72,10 +85,12 @@ def prepare(raw_dir: str, out_dir: str, mode: str) -> dict:
                 levels.append({"shape": [s // fi for s, fi in zip(shape, f)],
                                "voxel_nm": [round(v * fi, 3) for v, fi in zip(spacing, f)]})
             meta["volumes"][vol] = {"levels": levels, "mean": float(img.mean()), "std": float(img.std()),
-                                    "n_instances": int(len(np.unique(lab)) - 1), "fg_frac": float(fg.mean())}
+                                    "n_instances": int(len(np.unique(lab)) - 1) if side == "test" else None,
+                                    "fg_frac": float(fg.mean())}
             meta[side].append(vol)
             print(f"{name}/{vol} ({side}): L0 {shape} at {spacing} nm, {meta['volumes'][vol]['n_instances']} "
                   f"instances, foreground {100 * fg.mean():.1f} %", flush=True)
+            img = lab = fg = None
     with open(out / "meta.json", "w") as f:
         json.dump(meta, f, indent=1)
     return meta
@@ -85,10 +100,42 @@ def load_meta(data_dir: str) -> dict:
     return json.load(open(Path(data_dir) / "meta.json"))
 
 
+def level_with_xy(meta: dict, xy_nm: float) -> int:
+    """The level whose in-plane voxel size is xy_nm."""
+    levels = meta["volumes"][meta["train"][0]]["levels"]
+    for k, lv in enumerate(levels):
+        if abs(lv["voxel_nm"][1] - xy_nm) < 1e-6:
+            return k
+    raise ValueError(f"{meta['dataset']}: no level with {xy_nm} nm in-plane ({[lv['voxel_nm'] for lv in levels]})")
+
+
+def train_level_of(cfg: dict, meta: dict) -> int:
+    """Training level of a run on this dataset: fixed (--level) or the level with --train-nm in-plane voxels."""
+    return level_with_xy(meta, cfg["train_nm"]) if cfg.get("train_nm") else cfg["level"]
+
+
 def window_size(meta: dict, level: int, train_level: int, train_window) -> tuple:
     """Voxels per axis of a window covering the same tissue as ``train_window`` voxels at the training level."""
     ft, fl = meta["factors"][train_level], meta["factors"][level]
     return tuple(int(round(w * a / b)) for w, a, b in zip(train_window, ft, fl))
+
+
+class MultiSampler:
+    """Windows from several datasets, each at its own training level: every window first picks a dataset with
+    equal odds, so the largest datasets do not dominate."""
+
+    def __init__(self, samplers: list, seed: int = 0):
+        self.samplers = samplers
+        self.reseed(seed)
+
+    def reseed(self, seed: int):
+        self.rng = np.random.default_rng(seed)
+        for i, s in enumerate(self.samplers):
+            s.rng = np.random.default_rng(seed + 1000 * (i + 1))
+
+    def sample(self, batch: int):
+        parts = [self.samplers[int(self.rng.integers(len(self.samplers)))].sample(1) for _ in range(batch)]
+        return np.concatenate([p[0] for p in parts]), np.concatenate([p[1] for p in parts])
 
 
 class VolumeSampler:

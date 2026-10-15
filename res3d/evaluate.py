@@ -24,7 +24,7 @@ import torch
 from scipy import ndimage
 from scipy.optimize import linear_sum_assignment
 
-from .data import load_meta, window_size
+from .data import load_meta, train_level_of, window_size
 from .models import build_model
 
 
@@ -73,7 +73,9 @@ def predict(net, img: np.ndarray, window, overlap: float, mean: float, std: floa
                 prob = torch.softmax(net(t).float(), 1)[0, 1].cpu().numpy()
                 acc[sl] += prob * wmap
                 wsum[sl] += wmap
-    return acc / np.maximum(wsum, 1e-6)
+    np.maximum(wsum, 1e-6, out=wsum)
+    acc /= wsum  # in place: the full-resolution arrays are large
+    return acc
 
 
 def upsample(a: np.ndarray, r) -> np.ndarray:
@@ -142,7 +144,8 @@ def main(argv=None):
     net.eval()
     out = run / a.out_name
     out.mkdir(exist_ok=True)
-    res = {"model": cfg["model"], "train_level": cfg["level"], "levels": {}, "per_volume": {}}
+    tl = train_level_of(cfg, meta)
+    res = {"model": cfg["model"], "train_level": tl, "dataset": meta["dataset"], "levels": {}, "per_volume": {}}
     for v in meta["test"]:
         d = Path(a.data_dir) / v
         st = meta["volumes"][v]
@@ -154,14 +157,14 @@ def main(argv=None):
         for lv in a.levels:
             t0 = time.time()
             img = np.load(d / f"img_L{lv}.npy")
-            if a.input_from_train_level and lv < cfg["level"]:
-                src = np.load(d / f"img_L{cfg['level']}.npy").astype(np.float32)
+            if a.input_from_train_level and lv < tl:
+                src = np.load(d / f"img_L{tl}.npy").astype(np.float32)
                 img = ndimage.zoom(src, [t / s for t, s in zip(img.shape, src.shape)], order=1, grid_mode=True,
                                    mode="nearest")
-            if a.input_lowpass and lv < cfg["level"]:
-                r = [b // c for b, c in zip(meta["factors"][cfg["level"]], meta["factors"][lv])]
+            if a.input_lowpass and lv < tl:
+                r = [b // c for b, c in zip(meta["factors"][tl], meta["factors"][lv])]
                 img = ndimage.gaussian_filter(img.astype(np.float32), [0.5 * x if x > 1 else 0 for x in r])
-            win = window_size(meta, lv, cfg["level"], cfg["window"])
+            win = window_size(meta, lv, tl, cfg["window"])
             prob = predict(net, img, win, a.overlap, st["mean"], st["std"], dev)
             ratio = [b // c for b, c in zip(meta["factors"][lv], meta["factors"][0])]
             fg = upsample(prob >= 0.5, ratio)
@@ -177,7 +180,7 @@ def main(argv=None):
                   flush=True)
             if v == meta["test"][0]:
                 overlay(np.load(d / "img_L0.npy"), fg, gt_fg, out / f"overlay_{v}_L{lv}.png",
-                        f"{cfg['model']} trained at L{cfg['level']}, tested at L{lv} {r['voxel_nm']} nm: "
+                        f"{cfg['model']} trained at L{tl}, tested at L{lv} {r['voxel_nm']} nm: "
                         f"Dice {r['dice']:.3f}")
             del prob, fg
     for lv in a.levels:
@@ -190,9 +193,9 @@ def main(argv=None):
         k = f"L{lv}"
         m = res["levels"][k]
         vn = res["per_volume"][meta["test"][0]][k]["voxel_nm"]
-        lines.append(f"| {k}{' (train)' if lv == cfg['level'] else ''} | {' x '.join(f'{x:g}' for x in vn)} | "
+        lines.append(f"| {k}{' (train)' if lv == tl else ''} | {' x '.join(f'{x:g}' for x in vn)} | "
                      f"{m['dice']:.3f} | {m['iou']:.3f} | {m['ap50']:.3f} | {m['ap75']:.3f} |")
-    (out / "results.md").write_text(f"# {cfg['model']} (trained at L{cfg['level']})\n\n" + "\n".join(lines) + "\n")
+    (out / "results.md").write_text(f"# {cfg['model']} on {meta['dataset']} (trained at L{tl})\n\n" + "\n".join(lines) + "\n")
     print("\n".join(lines))
 
 

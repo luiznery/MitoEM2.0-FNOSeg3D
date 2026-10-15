@@ -20,7 +20,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from .data import load_meta, window_size
+from .data import load_meta, train_level_of, window_size
 from .evaluate import predict, upsample
 from .models import build_model
 
@@ -130,7 +130,7 @@ def main(argv=None):
                           input_layer=cfg.get("input_layer", "conv"),
                           input_radius=cfg.get("input_radius", 2 / 64)).to(dev).eval()
         net.load_state_dict(torch.load(run / "final.pt", map_location=dev, weights_only=False)["net"])
-        man["runs"][name] = {"model": cfg["model"], "train_level": cfg["level"]}
+        man["runs"][name] = {"model": cfg["model"], "train_level": train_level_of(cfg, meta)}
         res = run / "eval" / "results.json"
         if res.exists():
             r = json.load(open(res))
@@ -138,7 +138,7 @@ def main(argv=None):
         man["dice"][name] = {}
         for k, f in enumerate(factors):
             img = np.load(d / f"img_L{k}.npy", mmap_mode="r")
-            win = window_size(meta, k, cfg["level"], cfg["window"])
+            win = window_size(meta, k, train_level_of(cfg, meta), cfg["window"])
             s_k = [s // b for s, b in zip(start, f)]
             n_k = [n // b for n, b in zip(size, f)]
             lo = [max(0, s - w // 2) for s, w in zip(s_k, win)]

@@ -16,7 +16,7 @@ import torch
 import torch.nn.functional as F
 from scipy import ndimage
 
-from .data import load_meta
+from .data import load_meta, train_level_of
 from .models import build_model
 
 
@@ -49,7 +49,7 @@ def main(argv=None):
         mods[n].register_forward_hook(hook(n))
     v = meta["test"][0]
     st = meta["volumes"][v]
-    img = np.load(Path(a.data_dir) / v / f"img_L{cfg['level']}.npy")
+    img = np.load(Path(a.data_dir) / v / f"img_L{train_level_of(cfg, meta)}.npy")
     rng = np.random.default_rng(0)
     w = cfg["window"]
     diffs = {n: [] for n in names}

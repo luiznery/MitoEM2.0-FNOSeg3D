@@ -4,6 +4,9 @@
     python -m res3d.train --data-dir /data/res3d/Dataset001_ME2-Beta --out-dir /runs/beta/e3k2 --model e3k2 \
         --level 1 --window 96 --steps 3000 --optimizer sam
 
+Several datasets at once: give several --data-dir and --train-nm (in-plane voxel size) instead of --level; each
+dataset is used at its own level with that voxel size, and every window picks a dataset with equal odds.
+
 Writes <out-dir>/config.json, metrics.jsonl (one line per epoch: train loss, lr, Dice on fixed test windows at the
 training level and at L0), last.pt (resume) and final.pt. No checkpoint is selected on the test windows: they are
 only used for the curves, as in the 2D v08 / v09 runs.
@@ -20,16 +23,18 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .data import VolumeSampler, load_meta
+from .data import MultiSampler, VolumeSampler, level_with_xy, load_meta
 from .models import build_model, n_params
 
 
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--data-dir", required=True)
+    p.add_argument("--data-dir", nargs="+", required=True, help="one or more prepared datasets")
     p.add_argument("--out-dir", required=True)
     p.add_argument("--model", required=True)
-    p.add_argument("--level", type=int, required=True, help="training level (0 = native)")
+    p.add_argument("--level", type=int, default=None, help="training level (0 = native)")
+    p.add_argument("--train-nm", type=float, default=None,
+                   help="instead of --level: train each dataset at its level with this in-plane voxel size (nm)")
     p.add_argument("--window", type=int, nargs="+", default=[96], help="window at the training level, voxels (z y x or one value)")
     p.add_argument("--steps", type=int, default=3000)
     p.add_argument("--steps-per-epoch", type=int, default=100)
@@ -50,7 +55,9 @@ def parse_args(argv=None):
                    help="neural operators: IBM's learned 2x2x2 stride-2 conv, 2x2x2 average + 1x1, or a physically sized kernel")
     p.add_argument("--input-radius", type=float, default=2 / 64, help="--input-layer phys: kernel radius (window units)")
     p.add_argument("--amp", action="store_true", help="fp16 autocast (U-Net only: the spectral layers need fp32)")
-    p.add_argument("--val-windows", type=int, default=12, help="fixed test windows for the curves")
+    p.add_argument("--val-windows", type=int, default=12, help="fixed test windows for the curves (per dataset when "
+                   "there are several: --val-per-dataset)")
+    p.add_argument("--val-per-dataset", type=int, default=2)
     p.add_argument("--val-l0-every", type=int, default=5, help="epochs between Dice at L0 on the same windows (0 = never)")
     p.add_argument("--seed", type=int, default=0)
     return p.parse_args(argv)
@@ -76,6 +83,7 @@ class ValWindows:
     def __init__(self, data_dir, meta, level, window, n, seed=123):
         rng = np.random.default_rng(seed)
         self.items = []
+        self.level = level
         tests = meta["test"]
         for i in range(n):
             v = tests[i % len(tests)]
@@ -94,7 +102,7 @@ class ValWindows:
                 self.items.append((lv, x, np.asarray(fgs[lv][sl])))
 
     @torch.no_grad()
-    def dice(self, net, dev, lv):
+    def counts(self, net, dev, lv):
         inter = tot = 0
         for l, x, y in self.items:
             if l != lv:
@@ -102,7 +110,19 @@ class ValWindows:
             pred = net(torch.from_numpy(x)[None, None].to(dev)).argmax(1)[0].cpu().numpy()
             inter += int(((pred == 1) & (y == 1)).sum())
             tot += int((pred == 1).sum() + (y == 1).sum())
+        return inter, tot
+
+    def dice(self, net, dev, lv):
+        inter, tot = self.counts(net, dev, lv)
         return 2 * inter / tot if tot else 1.0
+
+
+def val_dice(vals, net, dev, which):
+    """Dice of each dataset's windows and of all of them together; which = "train" (each dataset at its training
+    level) or "L0"."""
+    per = [v.counts(net, dev, v.level if which == "train" else 0) for v in vals]
+    inter, tot = sum(i for i, _ in per), sum(t for _, t in per)
+    return 2 * inter / tot if tot else 1.0, [round(2 * i / t, 4) if t else 1.0 for i, t in per]
 
 
 def main(argv=None):
@@ -114,20 +134,32 @@ def main(argv=None):
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     out = Path(a.out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    meta = load_meta(a.data_dir)
+    if (a.level is None) == (a.train_nm is None):
+        raise SystemExit("give exactly one of --level and --train-nm")
+    metas = [load_meta(d) for d in a.data_dir]
+    levels = [a.level if a.level is not None else level_with_xy(m, a.train_nm) for m in metas]
     window = tuple(a.window * 3 if len(a.window) == 1 else a.window)
     net = build_model(a.model, a.filters, a.blocks, a.modes, tuple(a.radii), train_window=min(window[1:]),
                       unet_channels=a.unet_channels, input_layer=a.input_layer, input_radius=a.input_radius).to(dev)
-    cfg = {**vars(a), "window": window, "n_params": n_params(net), "train_voxel_nm": None}
-    vol0 = meta["volumes"][meta["train"][0]]
-    cfg["train_voxel_nm"] = vol0["levels"][a.level]["voxel_nm"]
-    cfg["window_nm"] = [w * v for w, v in zip(window, cfg["train_voxel_nm"])]
+    cfg = {**vars(a), "window": window, "n_params": n_params(net)}
+    cfg["train_levels"] = {m["dataset"]: lv for m, lv in zip(metas, levels)}
+    cfg["train_voxel_nm"] = {m["dataset"]: m["volumes"][m["train"][0]]["levels"][lv]["voxel_nm"]
+                             for m, lv in zip(metas, levels)}
+    if len(metas) == 1:  # single-dataset runs keep the earlier config fields
+        cfg["data_dir"], cfg["level"] = a.data_dir[0], levels[0]
+        cfg["train_voxel_nm"] = cfg["train_voxel_nm"][metas[0]["dataset"]]
+        cfg["window_nm"] = [w * v for w, v in zip(window, cfg["train_voxel_nm"])]
     json.dump(cfg, open(out / "config.json", "w"), indent=1)
-    print(f"{a.model}: {cfg['n_params']:,} parameters; window {window} voxels = "
-          f"{[round(v) for v in cfg['window_nm']]} nm at level {a.level}", flush=True)
+    for m, lv in zip(metas, levels):
+        vox = m["volumes"][m["train"][0]]["levels"][lv]["voxel_nm"]
+        print(f"{m['dataset']}: level {lv}, voxel {vox} nm, window {[round(w * v) for w, v in zip(window, vox)]} nm, "
+              f"{len(m['train'])} training volumes", flush=True)
+    print(f"{a.model}: {cfg['n_params']:,} parameters", flush=True)
 
-    sampler = VolumeSampler(a.data_dir, a.level, window, seed=a.seed)
-    val = ValWindows(a.data_dir, meta, a.level, window, a.val_windows)
+    samplers = [VolumeSampler(d, lv, window, seed=a.seed) for d, lv in zip(a.data_dir, levels)]
+    sampler = samplers[0] if len(samplers) == 1 else MultiSampler(samplers, a.seed)
+    nval = a.val_windows if len(metas) == 1 else a.val_per_dataset
+    vals = [ValWindows(d, m, lv, window, nval) for d, m, lv in zip(a.data_dir, metas, levels)]
     base = torch.optim.AdamW(param_groups(net, a.weight_decay), lr=a.lr)
     warm = max(1, int(a.warmup_frac * a.steps))
 
@@ -145,7 +177,10 @@ def main(argv=None):
         net.load_state_dict(st["net"])
         base.load_state_dict(st["opt"])
         step, epoch = st["step"], st["epoch"]
-        sampler.rng = np.random.default_rng(a.seed + step)
+        if isinstance(sampler, MultiSampler):
+            sampler.reseed(a.seed + step)
+        else:
+            sampler.rng = np.random.default_rng(a.seed + step)
         print(f"resumed at step {step}", flush=True)
 
     def forward_backward(x, y):
@@ -194,10 +229,16 @@ def main(argv=None):
             step += 1
         epoch += 1
         net.eval()
+        dice_t, per_t = val_dice(vals, net, dev, "train")
         rec = {"epoch": epoch, "step": step, "train_loss": float(np.mean(losses)), "lr": lr_at(step - 1),
-               "val_dice": val.dice(net, dev, a.level), "minutes": round((time.time() - t0) / 60, 2)}
-        if a.level != 0 and a.val_l0_every and (epoch % a.val_l0_every == 0 or step >= a.steps):
-            rec["val_dice_L0"] = val.dice(net, dev, 0)
+               "val_dice": dice_t, "minutes": round((time.time() - t0) / 60, 2)}
+        if len(vals) > 1:
+            rec["val_by_dataset"] = {m["dataset"]: {"train": d} for m, d in zip(metas, per_t)}
+        if any(levels) and a.val_l0_every and (epoch % a.val_l0_every == 0 or step >= a.steps):
+            rec["val_dice_L0"], per_0 = val_dice(vals, net, dev, "L0")
+            if len(vals) > 1:
+                for m, d in zip(metas, per_0):
+                    rec["val_by_dataset"][m["dataset"]]["L0"] = d
         with open(out / "metrics.jsonl", "a") as f:
             f.write(json.dumps(rec) + "\n")
         print(json.dumps(rec), flush=True)
