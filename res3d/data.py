@@ -35,28 +35,56 @@ def block_mean(a: np.ndarray, f) -> np.ndarray:
     return out
 
 
-def read_nifti(path: Path, max_xy: int | None = None):
+def labelled_xy_crop(path: Path, size: int, cell: int = 64) -> tuple[int, int]:
+    """(x0, y0) of the size x size region with the most labelled voxels of a label volume, read in z-slabs; prints a
+    coarse map of the labelled fraction."""
+    import nibabel as nib
+    img = nib.load(str(path))
+    nx, ny, nz = img.shape[:3]
+    gx, gy = -(-nx // cell), -(-ny // cell)
+    count = np.zeros((gx, gy))
+    for z in range(0, nz, 16):
+        fg = np.asarray(img.dataobj[:, :, z:min(nz, z + 16)]) > 0
+        fg = np.pad(fg, ((0, gx * cell - nx), (0, gy * cell - ny), (0, 0)))
+        count += fg.reshape(gx, cell, gy, cell, -1).sum((1, 3, 4))
+    k = size // cell
+    csum = np.pad(count, ((1, 0), (1, 0))).cumsum(0).cumsum(1)
+    win = csum[k:, k:] - csum[:-k, k:] - csum[k:, :-k] + csum[:-k, :-k]
+    i, j = np.unravel_index(int(np.argmax(win)), win.shape)
+    frac = count / (cell * cell * nz)
+    step = max(1, gx // 16)
+    print(f"{path.name}: labelled fraction per {cell * step} px cell (x down, y across):", flush=True)
+    for r in range(0, gx, step):
+        print("  " + " ".join(f"{frac[r:r + step, c:c + step].mean() * 100:4.1f}" for c in range(0, gy, step)), flush=True)
+    centre = win[(gx - k) // 2, (gy - k) // 2] / (size * size * nz)
+    print(f"best {size} x {size} region at x {i * cell}, y {j * cell}: {win[i, j] / (size * size * nz) * 100:.2f} % labelled "
+          f"(central region {centre * 100:.2f} %)", flush=True)
+    return int(i * cell), int(j * cell)
+
+
+def read_nifti(path: Path, max_xy: int | None = None, xy0: tuple[int, int] | None = None):
     """Array as (z, y, x) and voxel size (z, y, x) in the file's units (nm here). With max_xy, a volume wider than
-    max_xy in x or y is cut to its central max_xy x max_xy region, read in z-slabs so the whole volume is never in
-    memory."""
+    max_xy in x or y is cut to a max_xy x max_xy region (central, or starting at xy0), read in z-slabs so the whole
+    volume is never in memory."""
     import nibabel as nib
     img = nib.load(str(path))
     nx, ny, nz = img.shape[:3]
     if max_xy and (nx > max_xy or ny > max_xy):
-        x0, y0 = max(0, (nx - max_xy) // 2), max(0, (ny - max_xy) // 2)
+        x0, y0 = xy0 if xy0 else (max(0, (nx - max_xy) // 2), max(0, (ny - max_xy) // 2))
         x1, y1 = min(nx, x0 + max_xy), min(ny, y0 + max_xy)
         slabs = [np.asarray(img.dataobj[:, :, z:min(nz, z + 16)])[x0:x1, y0:y1] for z in range(0, nz, 16)]
         a = np.concatenate(slabs, axis=2)
-        print(f"{path.name}: central crop x {x0}:{x1}, y {y0}:{y1} of {nx} x {ny}", flush=True)
+        print(f"{path.name}: crop x {x0}:{x1}, y {y0}:{y1} of {nx} x {ny}", flush=True)
     else:
         a = np.asanyarray(img.dataobj)
     sx, sy, sz = (float(v) for v in img.header.get_zooms()[:3])
     return np.ascontiguousarray(np.transpose(a, (2, 1, 0))), (sz, sy, sx)
 
 
-def prepare(raw_dir: str, out_dir: str, mode: str, max_xy: int | None = None) -> dict:
+def prepare(raw_dir: str, out_dir: str, mode: str, max_xy: int | None = None, crop: str = "centre") -> dict:
     """Convert an nnU-Net style MitoEM 2.0 folder (imagesTr, labelsTr, imagesTs, labelsTs) into level pyramids.
-    ``max_xy``: keep only the central max_xy x max_xy region of wider volumes (recorded in meta.json)."""
+    ``max_xy``: keep only a max_xy x max_xy region of wider volumes, the central one or (crop="labelled") the one with
+    the most labelled voxels (recorded in meta.json)."""
     raw, name = Path(raw_dir), Path(raw_dir).name
     out = Path(out_dir) / name
     out.mkdir(parents=True, exist_ok=True)
@@ -67,8 +95,14 @@ def prepare(raw_dir: str, out_dir: str, mode: str, max_xy: int | None = None) ->
         for img_path in sorted((raw / img_dir).glob("*_0000.nii*")):
             vol = img_path.name.split("_0000.nii")[0]
             lab_path = next((raw / lab_dir).glob(f"{vol}.nii*"))
-            img, spacing = read_nifti(img_path, max_xy)
-            lab, _ = read_nifti(lab_path, max_xy)
+            xy0 = None
+            if max_xy and crop == "labelled":
+                import nibabel as nib
+                if max(nib.load(str(lab_path)).shape[:2]) > max_xy:
+                    xy0 = labelled_xy_crop(lab_path, max_xy)
+                    meta.setdefault("crops", {})[vol] = {"x0": xy0[0], "y0": xy0[1], "size": max_xy}
+            img, spacing = read_nifti(img_path, max_xy, xy0)
+            lab, _ = read_nifti(lab_path, max_xy, xy0)
             if img.shape != lab.shape:  # e.g. labels covering only part of the image: alignment unknown, skip
                 print(f"{name}/{vol}: image {img.shape} and labels {lab.shape} differ; volume skipped", flush=True)
                 meta.setdefault("skipped", {})[vol] = {"image": list(img.shape), "labels": list(lab.shape)}

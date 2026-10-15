@@ -30,6 +30,8 @@ def main(argv=None):
     p.add_argument("--raw-dir", default="/tmp/raw")
     p.add_argument("--max-xy", type=int, default=None)
     p.add_argument("--force", action="store_true", help="prepare again even if meta.json exists")
+    p.add_argument("--crop", default="centre", choices=["centre", "labelled"],
+                   help="--max-xy region: the central one or the one with the most labelled voxels")
     a = p.parse_args(argv)
     Path(a.zip_dir).mkdir(parents=True, exist_ok=True)
     for item in a.datasets:
@@ -49,12 +51,14 @@ def main(argv=None):
                 with urllib.request.urlopen(URL.format(name), timeout=600) as r, open(tmp, "wb") as f:
                     shutil.copyfileobj(r, f, length=1 << 24)
                 tmp.rename(z)
-            except urllib.error.HTTPError as e:  # Zenodo rate limit
-                if e.code != 429 or attempt == 5:
+            except (urllib.error.URLError, ConnectionError, OSError) as e:  # rate limit, dropped connection
+                if (isinstance(e, urllib.error.HTTPError) and e.code != 429) or attempt == 5:
                     raise
+                print(f"download failed ({e}); retrying", flush=True)
+                tmp.unlink(missing_ok=True)
                 time.sleep(30 * (attempt + 1))
         zipfile.ZipFile(z).extractall(a.raw_dir)
-        prepare(str(Path(a.raw_dir) / name), a.out, mode, a.max_xy)
+        prepare(str(Path(a.raw_dir) / name), a.out, mode, a.max_xy, a.crop)
         shutil.rmtree(Path(a.raw_dir) / name, ignore_errors=True)
 
 
