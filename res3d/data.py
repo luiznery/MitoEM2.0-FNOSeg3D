@@ -69,6 +69,19 @@ def prepare(raw_dir: str, out_dir: str, mode: str, max_xy: int | None = None) ->
             lab_path = next((raw / lab_dir).glob(f"{vol}.nii*"))
             img, spacing = read_nifti(img_path, max_xy)
             lab, _ = read_nifti(lab_path, max_xy)
+            if img.shape != lab.shape:  # e.g. labels covering only part of the image: alignment unknown, skip
+                print(f"{name}/{vol}: image {img.shape} and labels {lab.shape} differ; volume skipped", flush=True)
+                meta.setdefault("skipped", {})[vol] = {"image": list(img.shape), "labels": list(lab.shape)}
+                continue
+            if img.dtype != np.uint8:  # e.g. 16-bit volumes: rescale the 0.1-99.9 % range to 0-255
+                lo, hi = (float(q) for q in np.percentile(img[::4, ::4, ::4], [0.1, 99.9]))
+                print(f"{name}/{vol}: {img.dtype} image rescaled from [{lo:g}, {hi:g}] to 0-255", flush=True)
+                out8 = np.empty(img.shape, np.uint8)
+                for z0 in range(0, img.shape[0], 32):
+                    sl = img[z0:z0 + 32].astype(np.float32)
+                    out8[z0:z0 + 32] = np.clip(np.round((sl - lo) * (255.0 / max(hi - lo, 1e-6))), 0, 255)
+                img = out8
+                meta.setdefault("rescaled", {})[vol] = [lo, hi]
             shape = tuple(int(s // b * b) for s, b in zip(img.shape, big))
             img = img[:shape[0], :shape[1], :shape[2]]
             lab = lab[:shape[0], :shape[1], :shape[2]]

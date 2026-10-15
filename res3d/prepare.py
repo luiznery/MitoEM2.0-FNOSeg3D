@@ -29,13 +29,16 @@ def main(argv=None):
     p.add_argument("--zip-dir", required=True)
     p.add_argument("--raw-dir", default="/tmp/raw")
     p.add_argument("--max-xy", type=int, default=None)
+    p.add_argument("--force", action="store_true", help="prepare again even if meta.json exists")
     a = p.parse_args(argv)
     Path(a.zip_dir).mkdir(parents=True, exist_ok=True)
     for item in a.datasets:
         name, mode = item.split(":")
         if (Path(a.out) / name / "meta.json").exists():
-            print(f"{name}: already prepared", flush=True)
-            continue
+            if not a.force:
+                print(f"{name}: already prepared", flush=True)
+                continue
+            shutil.rmtree(Path(a.out) / name)
         z = Path(a.zip_dir) / f"{name}.zip"
         for attempt in range(6):
             if z.exists():
