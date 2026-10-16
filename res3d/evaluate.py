@@ -25,7 +25,7 @@ from scipy import ndimage
 from scipy.optimize import linear_sum_assignment
 
 from .data import load_meta, train_level_of, window_size
-from .models import build_model
+from .models import QUADRATURES, build_model, set_quadrature
 
 
 def parse_args(argv=None):
@@ -36,6 +36,9 @@ def parse_args(argv=None):
     p.add_argument("--overlap", type=float, default=0.25)
     p.add_argument("--min-um3", type=float, default=0.001, help="drop predicted components smaller than this")
     p.add_argument("--out-name", default="eval")
+    p.add_argument("--kernel-quadrature", default="point", choices=QUADRATURES,
+                   help="discretisation of physically sized kernels: as trained (point), cell averages, or auto "
+                        "(point where the grid is at least as fine as in training, cell averages where coarser)")
     p.add_argument("--input-lowpass", action="store_true",
                    help="diagnostic: Gaussian-smooth the input of finer levels (sigma = half the block factor to the "
                         "training level per axis), i.e. remove the detail and noise the model never saw in training")
@@ -141,11 +144,13 @@ def main(argv=None):
                       train_window=min(cfg["window"][1:]), unet_channels=cfg["unet_channels"],
                       input_layer=cfg.get("input_layer", "conv"), input_radius=cfg.get("input_radius", 2 / 64)).to(dev)
     net.load_state_dict(torch.load(run / "final.pt", map_location=dev, weights_only=False)["net"])
+    set_quadrature(net, a.kernel_quadrature)
     net.eval()
     out = run / a.out_name
     out.mkdir(exist_ok=True)
     tl = train_level_of(cfg, meta)
-    res = {"model": cfg["model"], "train_level": tl, "dataset": meta["dataset"], "levels": {}, "per_volume": {}}
+    res = {"model": cfg["model"], "train_level": tl, "dataset": meta["dataset"], "kernel_quadrature": a.kernel_quadrature,
+           "levels": {}, "per_volume": {}}
     for v in meta["test"]:
         d = Path(a.data_dir) / v
         st = meta["volumes"][v]

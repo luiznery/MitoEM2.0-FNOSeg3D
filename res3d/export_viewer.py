@@ -22,7 +22,7 @@ from PIL import Image
 
 from .data import load_meta, train_level_of, window_size
 from .evaluate import predict, upsample
-from .models import build_model
+from .models import QUADRATURES, build_model, set_quadrature
 
 
 def choose_crop(lab: np.ndarray, size, block) -> list[int]:
@@ -70,10 +70,12 @@ def main(argv=None):
     p.add_argument("--data-dir", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--crop", type=int, nargs=3, required=True, help="crop size in L0 voxels (z y x)")
-    p.add_argument("--runs", nargs="+", required=True)
+    p.add_argument("--runs", nargs="+", required=True,
+                   help="run directories, optionally NAME=DIR and DIR:QUADRATURE (default --kernel-quadrature)")
     p.add_argument("--volume", default=None, help="test volume (default: the first)")
     p.add_argument("--image-format", default="webp", choices=["webp", "jpg"])
     p.add_argument("--quality", type=int, default=72)
+    p.add_argument("--kernel-quadrature", default="point", choices=QUADRATURES)
     p.add_argument("--images-only", action="store_true",
                    help="rewrite only the image atlases of an existing export (same crop, predictions kept)")
     a = p.parse_args(argv)
@@ -121,17 +123,24 @@ def main(argv=None):
         img = np.load(d / f"img_L{k}.npy", mmap_mode="r")
         slk = tuple(slice(s // b, (s + n) // b) for s, n, b in zip(start, size, f))
         man["levels"][f"L{k}"] = atlases(np.asarray(img[slk]), out, f"em_L{k}", quality=a.quality, fmt=a.image_format)
-    for run in a.runs:
-        run = Path(run)
+    short = meta["dataset"].split("ME2-")[-1].lower()
+    for spec in a.runs:
+        name, _, path = spec.rpartition("=")
+        path, _, quad = path.partition(":")
+        run = Path(path)
+        name = name or run.name
         cfg = json.load(open(run / "config.json"))
-        name = run.name
         net = build_model(cfg["model"], cfg["filters"], cfg["blocks"], cfg["modes"], tuple(cfg["radii"]),
                           train_window=min(cfg["window"][1:]), unet_channels=cfg["unet_channels"],
                           input_layer=cfg.get("input_layer", "conv"),
                           input_radius=cfg.get("input_radius", 2 / 64)).to(dev).eval()
         net.load_state_dict(torch.load(run / "final.pt", map_location=dev, weights_only=False)["net"])
-        man["runs"][name] = {"model": cfg["model"], "train_level": train_level_of(cfg, meta)}
-        res = run / "eval" / "results.json"
+        set_quadrature(net, quad or a.kernel_quadrature)
+        man["runs"][name] = {"model": cfg["model"], "train_level": train_level_of(cfg, meta),
+                             "kernel_quadrature": quad or a.kernel_quadrature}
+        res = run / f"eval_{short}" / "results.json"
+        if not res.exists():
+            res = run / "eval" / "results.json"
         if res.exists():
             r = json.load(open(res))
             man["runs"][name]["test_dice"] = {k: r["per_volume"][v][k]["dice"] for k in r["per_volume"][v]}
