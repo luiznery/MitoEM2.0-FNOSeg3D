@@ -36,6 +36,9 @@ def parse_args(argv=None):
     p.add_argument("--overlap", type=float, default=0.25)
     p.add_argument("--min-um3", type=float, default=0.001, help="drop predicted components smaller than this")
     p.add_argument("--out-name", default="eval")
+    p.add_argument("--upsample-coarse", action="store_true",
+                   help="levels coarser than the training level: interpolate the image (trilinear) up to the training "
+                        "grid and segment it there, then repeat the prediction onto the L0 grid")
     p.add_argument("--kernel-quadrature", default="point", choices=QUADRATURES,
                    help="discretisation of physically sized kernels: as trained (point), cell averages, or auto "
                         "(point where the grid is at least as fine as in training, cell averages where coarser)")
@@ -150,7 +153,7 @@ def main(argv=None):
     out.mkdir(exist_ok=True)
     tl = train_level_of(cfg, meta)
     res = {"model": cfg["model"], "train_level": tl, "dataset": meta["dataset"], "kernel_quadrature": a.kernel_quadrature,
-           "levels": {}, "per_volume": {}}
+           "upsample_coarse": a.upsample_coarse, "levels": {}, "per_volume": {}}
     for v in meta["test"]:
         d = Path(a.data_dir) / v
         st = meta["volumes"][v]
@@ -169,9 +172,15 @@ def main(argv=None):
             if a.input_lowpass and lv < tl:
                 r = [b // c for b, c in zip(meta["factors"][tl], meta["factors"][lv])]
                 img = ndimage.gaussian_filter(img.astype(np.float32), [0.5 * x if x > 1 else 0 for x in r])
-            win = window_size(meta, lv, tl, cfg["window"])
+            run_lv = lv
+            if a.upsample_coarse and lv > tl:
+                shape_t = np.load(d / f"img_L{tl}.npy", mmap_mode="r").shape
+                img = ndimage.zoom(img.astype(np.float32), [t / s for t, s in zip(shape_t, img.shape)], order=1,
+                                   grid_mode=True, mode="nearest")
+                run_lv = tl
+            win = window_size(meta, run_lv, tl, cfg["window"])
             prob = predict(net, img, win, a.overlap, st["mean"], st["std"], dev)
-            ratio = [b // c for b, c in zip(meta["factors"][lv], meta["factors"][0])]
+            ratio = [b // c for b, c in zip(meta["factors"][run_lv], meta["factors"][0])]
             fg = upsample(prob >= 0.5, ratio)
             inter = int((fg & gt_fg).sum())
             s = int(fg.sum() + gt_fg.sum())
