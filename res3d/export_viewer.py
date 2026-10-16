@@ -26,22 +26,26 @@ from .models import QUADRATURES, build_model, set_quadrature
 
 
 def choose_crop(lab: np.ndarray, size, block) -> list[int]:
-    """Start (z, y, x) of the crop with the most ground-truth instances among crops with 8-35 % foreground."""
+    """Start (z, y, x) of the crop with the most ground-truth instances among crops with 8-35 % foreground (any
+    foreground if no crop has that much, as in sparsely labelled volumes)."""
     sub = (2, 8, 8) if lab.shape[0] > size[0] else (1, 8, 8)
     small = np.ascontiguousarray(lab[::sub[0], ::sub[1], ::sub[2]])
     steps = [max(b, (s // 4) // b * b) for s, b in zip(size, block)]
     best, best_start = -1, [0, 0, 0]
+    any_best, any_start = -1, [0, 0, 0]
     for z in range(0, lab.shape[0] - size[0] + 1, steps[0]):
         for y in range(0, lab.shape[1] - size[1] + 1, steps[1]):
             for x in range(0, lab.shape[2] - size[2] + 1, steps[2]):
                 c = small[z // sub[0]:(z + size[0]) // sub[0], y // sub[1]:(y + size[1]) // sub[1],
                           x // sub[2]:(x + size[2]) // sub[2]]
                 fg = float((c > 0).mean())
-                if not 0.08 <= fg <= 0.35:
-                    continue
                 n = len(np.unique(c)) - 1
-                if n > best:
+                if n > any_best:
+                    any_best, any_start = n, [z, y, x]
+                if 0.08 <= fg <= 0.35 and n > best:
                     best, best_start = n, [z, y, x]
+    if best < 0:
+        best, best_start = any_best, any_start
     print(f"crop start {best_start}, about {best} instances", flush=True)
     return best_start
 
